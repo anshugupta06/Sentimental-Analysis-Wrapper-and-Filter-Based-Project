@@ -1,0 +1,81 @@
+# PSO using XG Boost
+!pip install pyswarms
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from xgboost import XGBClassifier
+from sklearn.metrics import accuracy_score
+import pyswarms as ps
+
+# Load the dataset
+file_path = '/content/drive/MyDrive/sentiment_tweet.csv'  # Replace with your actual file path
+data = pd.read_csv(file_path)
+
+# Preprocess the data
+X_raw = data['message to examine']  # Text messages
+y = data['label (depression result)']  # Labels
+
+# Vectorize the text data using TF-IDF
+vectorizer = TfidfVectorizer(max_features=1000)  # Limit to 1000 features for simplicity
+X = vectorizer.fit_transform(X_raw).toarray()
+
+# Split the dataset into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Define the PSO objective function using XGBoost
+def objective_function_xgb(weights):
+    """
+    Evaluate the performance of an XGBoost model using the given feature weights.
+    """
+    # Reshape weights to (n_particles, 1, n_features)
+    weights = weights.reshape(weights.shape[0], 1, weights.shape[1])
+
+    # Initialize an array to store accuracy for each particle
+    accuracies = []
+    # Iterate over each particle's weights
+    for particle_weights in weights:
+        # Apply weights to features
+        X_train_weighted = X_train * particle_weights
+        X_test_weighted = X_test * particle_weights
+
+        # Train an XGBoost model
+        model = XGBClassifier(eval_metric='logloss', random_state=42)
+        model.fit(X_train_weighted, y_train)
+
+        # Predict and calculate accuracy
+        y_pred = model.predict(X_test_weighted)
+        accuracy = accuracy_score(y_test, y_pred)
+
+        accuracies.append(accuracy)
+
+    # Return negative accuracies for minimization
+    return -np.array(accuracies)
+
+# PSO Optimization using XGBoost
+def optimize_with_pso_xgb():
+    # Define bounds for weights (0 to 1 for each feature)
+    dimensions = X_train.shape[1]  # Number of features
+    bounds = (np.zeros(dimensions), np.ones(dimensions))
+
+    # Define PSO options
+    options = {'c1': 0.5, 'c2': 0.3, 'w': 0.9}  # Example options
+
+    # Define the optimizer
+    optimizer = ps.single.GlobalBestPSO(
+        n_particles=30,  # Number of particles
+        dimensions=dimensions,  # Number of features
+        options=options,  # Add the options argument here
+        bounds=bounds  # Bounds for the weights
+    )
+
+    # Run optimization
+    best_cost, best_weights = optimizer.optimize(objective_function_xgb, iters=50)
+
+    return best_weights, -best_cost  # Return weights and accuracy
+
+# Run PSO with XGBoost
+best_weights_xgb, best_accuracy_xgb = optimize_with_pso_xgb()
+
+# Output the results
+print("Best Feature Weights (XGBoost):", best_weights_xgb)
+print("Best Accuracy Score (XGBoost):", best_accuracy_xgb)
