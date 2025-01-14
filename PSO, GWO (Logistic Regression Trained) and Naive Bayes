@@ -1,0 +1,182 @@
+# PSO, GWO (Logistic Regration Trained) and Naive Bayes
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.metrics import accuracy_score
+import pyswarms as ps
+
+# Load the dataset
+file_path = '/content/drive/MyDrive/sentiment_tweet.csv'
+data = pd.read_csv(file_path)
+
+# Preprocess the data
+X_raw = data['message to examine']  # Text messages
+y = data['label (depression result)']  # Labels
+
+# Vectorize the text data using TF-IDF
+vectorizer = TfidfVectorizer(max_features=1000)  # Limit to 1000 features for simplicity
+X = vectorizer.fit_transform(X_raw).toarray()
+
+# Split the dataset into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Define the objective function
+def objective_function(weights):
+    """
+    Evaluate the performance of a classifier (Logistic Regression and Naive Bayes) using the given feature weights.
+    """
+    weights = weights.reshape(weights.shape[0], 1, weights.shape[1])
+    accuracies_logreg = []
+    accuracies_nb = []
+
+    for particle_weights in weights:
+        X_train_weighted = X_train * particle_weights
+        X_test_weighted = X_test * particle_weights
+
+        # Logistic Regression
+        model_logreg = LogisticRegression(max_iter=500)
+        model_logreg.fit(X_train_weighted, y_train)
+        y_pred_logreg = model_logreg.predict(X_test_weighted)
+        accuracy_logreg = accuracy_score(y_test, y_pred_logreg)
+        accuracies_logreg.append(accuracy_logreg)
+
+        # Naive Bayes
+        model_nb = MultinomialNB()
+        model_nb.fit(X_train_weighted, y_train)
+        y_pred_nb = model_nb.predict(X_test_weighted)
+        accuracy_nb = accuracy_score(y_test, y_pred_nb)
+        accuracies_nb.append(accuracy_nb)
+
+    # Return the average accuracy of both classifiers for minimization
+    avg_accuracy = (np.mean(accuracies_logreg) + np.mean(accuracies_nb)) / 2
+    return -avg_accuracy  # Negative for minimization
+
+# PSO Optimization
+def optimize_with_pso():
+    dimensions = X_train.shape[1]
+    bounds = (np.zeros(dimensions), np.ones(dimensions))
+    options = {'c1': 0.5, 'c2': 0.3, 'w': 0.9}
+
+    optimizer = ps.single.GlobalBestPSO(
+        n_particles=30,
+        dimensions=dimensions,
+        options=options,
+        bounds=bounds
+    )
+    best_cost, best_weights = optimizer.optimize(objective_function, iters=50)
+    return best_weights, -best_cost
+
+# GWO Implementation
+def gwo(objective_function, dim, n_agents, max_iter, lb, ub):
+    alpha_pos = np.zeros(dim)
+    beta_pos = np.zeros(dim)
+    delta_pos = np.zeros(dim)
+    alpha_score = float("inf")
+    beta_score = float("inf")
+    delta_score = float("inf")
+    positions = np.random.uniform(lb, ub, (n_agents, dim))
+
+    for t in range(max_iter):
+        for i in range(n_agents):
+            positions[i, :] = np.clip(positions[i, :], lb, ub)
+            fitness = objective_function(positions[i, :].reshape(1, -1))
+
+            if fitness < alpha_score:
+                delta_score = beta_score
+                delta_pos = beta_pos.copy()
+                beta_score = alpha_score
+                beta_pos = alpha_pos.copy()
+                alpha_score = fitness
+                alpha_pos = positions[i, :].copy()
+            elif fitness < beta_score:
+                delta_score = beta_score
+                delta_pos = beta_pos.copy()
+                beta_score = fitness
+                beta_pos = positions[i, :].copy()
+            elif fitness < delta_score:
+                delta_score = fitness
+                delta_pos = positions[i, :].copy()
+
+        a = 2 - t * (2 / max_iter)
+        for i in range(n_agents):
+            for j in range(dim):
+                r1, r2 = np.random.rand(), np.random.rand()
+                A1 = 2 * a * r1 - a
+                C1 = 2 * r2
+                D_alpha = abs(C1 * alpha_pos[j] - positions[i, j])
+                X1 = alpha_pos[j] - A1 * D_alpha
+
+                r1, r2 = np.random.rand(), np.random.rand()
+                A2 = 2 * a * r1 - a
+                C2 = 2 * r2
+                D_beta = abs(C2 * beta_pos[j] - positions[i, j])
+                X2 = beta_pos[j] - A2 * D_beta
+
+                r1, r2 = np.random.rand(), np.random.rand()
+                A3 = 2 * a * r1 - a
+                C3 = 2 * r2
+                D_delta = abs(C3 * delta_pos[j] - positions[i, j])
+                X3 = delta_pos[j] - A3 * D_delta
+
+                positions[i, j] = (X1 + X2 + X3) / 3
+
+        print(f"Iteration {t+1}, Best Fitness: {-alpha_score}")
+
+    return alpha_pos, -alpha_score
+
+def optimize_with_gwo():
+    dim = X_train.shape[1]
+    n_agents = 30
+    max_iter = 50
+    lb, ub = 0, 1
+    best_weights, best_accuracy = gwo(objective_function, dim, n_agents, max_iter, lb, ub)
+    return best_weights, best_accuracy
+
+# Run PSO
+print("\nOptimizing with PSO...")
+best_weights_pso, best_accuracy_pso = optimize_with_pso()
+
+# Run GWO
+print("\nOptimizing with GWO...")
+best_weights_gwo, best_accuracy_gwo = optimize_with_gwo()
+
+# Compare results
+print("\nResults:")
+print("PSO - Best Accuracy (Logistic Regression and Naive Bayes):", best_accuracy_pso)
+print("GWO - Best Accuracy (Logistic Regression and Naive Bayes):", best_accuracy_gwo)
+if best_accuracy_pso > best_accuracy_gwo:
+    print("PSO achieved the best result.")
+    best_weights = best_weights_pso
+else:
+    print("GWO achieved the best result.")
+    best_weights = best_weights_gwo
+
+# Final evaluation of the selected weights using both classifiers
+
+# Logistic Regression
+X_train_final = X_train * best_weights
+X_test_final = X_test * best_weights
+
+# Train the Logistic Regression model using the selected weights
+final_model_logreg = LogisticRegression(max_iter=500)
+final_model_logreg.fit(X_train_final, y_train)
+
+# Make predictions and calculate final accuracy for Logistic Regression
+y_pred_final_logreg = final_model_logreg.predict(X_test_final)
+final_accuracy_logreg = accuracy_score(y_test, y_pred_final_logreg)
+
+# Naive Bayes
+model_nb = MultinomialNB()
+model_nb.fit(X_train_final, y_train)
+
+# Make predictions and calculate final accuracy for Naive Bayes
+y_pred_final_nb = model_nb.predict(X_test_final)
+final_accuracy_nb = accuracy_score(y_test, y_pred_final_nb)
+
+# Print the final results
+print("\nFinal Best Feature Weights:", best_weights)
+print("Final Accuracy with Logistic Regression and Selected Weights:", final_accuracy_logreg)
+print("Final Accuracy with Naive Bayes and Selected Weights:", final_accuracy_nb)
