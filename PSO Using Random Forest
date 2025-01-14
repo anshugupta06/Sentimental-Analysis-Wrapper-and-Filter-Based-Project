@@ -1,0 +1,119 @@
+# PSO using Random Forest
+!pip install pyswarms xgboost
+
+# Import libraries
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from sklearn.metrics import accuracy_score
+import pyswarms as ps
+
+# Load the dataset
+file_path = '/content/drive/MyDrive/sentiment_tweet.csv'
+data = pd.read_csv(file_path)
+
+# Check the first few rows of the dataset
+print("Dataset Preview:")
+print(data.head())
+
+# Preprocess the data
+# Ensure the column names match exactly with the dataset
+X_raw = data['message to examine']  # Adjust if the column name differs
+y_raw = data['label (depression result)']  # Adjust if the column name differs
+
+# Encode labels if they are not numeric
+if y_raw.dtype == 'object':
+    y = y_raw.factorize()[0]  # Convert to numeric labels
+else:
+    y = y_raw
+
+# Handle missing values (if any)
+X_raw = X_raw.fillna("")
+y = pd.Series(y).fillna(0)
+
+# Vectorize the text data using TF-IDF
+vectorizer = TfidfVectorizer(max_features=1000)  # Limit to 1000 features for simplicity
+X = vectorizer.fit_transform(X_raw).toarray()
+
+# Split the dataset into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Define the PSO objective functions
+def objective_function_rf(weights):
+    """
+    Evaluate the performance of a Random Forest model using the given feature weights.
+    """
+    weights = weights.reshape(weights.shape[0], 1, weights.shape[1])
+    accuracies = []
+
+    for particle_weights in weights:
+        # Apply weights to features
+        X_train_weighted = X_train * particle_weights
+        X_test_weighted = X_test * particle_weights
+
+        # Train a Random Forest model
+        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model.fit(X_train_weighted, y_train)
+
+        # Predict and calculate accuracy
+        y_pred = model.predict(X_test_weighted)
+        accuracy = accuracy_score(y_test, y_pred)
+
+        accuracies.append(accuracy)
+
+    return -np.array(accuracies)
+
+def objective_function_xgb(weights):
+    """
+    Evaluate the performance of an XGBoost model using the given feature weights.
+    """
+    weights = weights.reshape(weights.shape[0], 1, weights.shape[1])
+    accuracies = []
+
+    for particle_weights in weights:
+        # Apply weights to features
+        X_train_weighted = X_train * particle_weights
+        X_test_weighted = X_test * particle_weights
+
+        # Train an XGBoost model
+        model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
+        model.fit(X_train_weighted, y_train)
+
+        # Predict and calculate accuracy
+        y_pred = model.predict(X_test_weighted)
+        accuracy = accuracy_score(y_test, y_pred)
+
+        accuracies.append(accuracy)
+
+    return -np.array(accuracies)
+
+# PSO Optimization Function
+def optimize_with_pso(objective_function):
+    dimensions = X_train.shape[1]
+    bounds = (np.zeros(dimensions), np.ones(dimensions))
+    options = {'c1': 0.5, 'c2': 0.3, 'w': 0.9}
+
+    optimizer = ps.single.GlobalBestPSO(
+        n_particles=30,
+        dimensions=dimensions,
+        options=options,
+        bounds=bounds
+    )
+
+    best_cost, best_weights = optimizer.optimize(objective_function, iters=50)
+    return best_weights, -best_cost
+
+# Run PSO with Random Forest
+print("Optimizing with Random Forest...")
+best_weights_rf, best_accuracy_rf = optimize_with_pso(objective_function_rf)
+print("Random Forest Best Feature Weights:", best_weights_rf)
+print("Random Forest Best Accuracy Score:", best_accuracy_rf)
+
+# Run PSO with XGBoost
+print("\nOptimizing with XGBoost...")
+best_weights_xgb, best_accuracy_xgb = optimize_with_pso(objective_function_xgb)
+print("XGBoost Best Feature Weights:", best_weights_xgb)
+print("XGBoost Best Accuracy Score:", best_accuracy_xgb)
